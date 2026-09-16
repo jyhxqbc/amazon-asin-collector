@@ -1,0 +1,70 @@
+{
+  "manifest_version": 3,
+  "name": "亚马逊 ASIN 收集器",
+  "version": "1.1.0",
+  "description": "跨商城收集 ASIN，并按油猴原逻辑下载商品主图与 A+ 图片 ZIP。两个功能独立开关。",
+  "minimum_chrome_version": "109",
+  "permissions": [
+    "storage",
+    "clipboardWrite"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "ASIN 收集器",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.amazon.com/*",
+        "https://*.amazon.ca/*",
+        "https://*.amazon.com.mx/*",
+        "https://*.amazon.com.br/*",
+        "https://*.amazon.co.uk/*",
+        "https://*.amazon.de/*",
+        "https://*.amazon.fr/*",
+        "https://*.amazon.it/*",
+        "https://*.amazon.es/*",
+        "https://*.amazon.nl/*",
+        "https://*.amazon.com.be/*",
+        "https://*.amazon.ie/*",
+        "https://*.amazon.pl/*",
+        "https://*.amazon.se/*",
+        "https://*.amazon.co.jp/*",
+        "https://*.amazon.in/*",
+        "https://*.amazon.com.au/*",
+        "https://*.amazon.sg/*",
+        "https://*.amazon.ae/*",
+        "https://*.amazon.sa/*",
+        "https://*.amazon.com.tr/*",
+        "https://*.amazon.eg/*",
+        "https://*.amazon.co.za/*",
+        "https://*.amazon.cn/*"
+      ],
+      "js": [
+        "common.js",
+        "content.js",
+        "image-downloader.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "host_permissions": [
+    "https://m.media-amazon.com/*",
+    "https://*.ssl-images-amazon.com/*"
+  ]
+}

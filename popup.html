@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ASIN 收集器</title><link rel="stylesheet" href="popup.css"></head>
+<body>
+  <header><span class="logo">A<span>+</span></span><div><h1>ASIN 收集器</h1><p>跨商城 · 持久保存</p></div></header>
+  <label class="setting"><span><strong>ASIN 收集</strong><small id="status">正在读取…</small></span><input id="enabled" type="checkbox" role="switch" disabled><span class="switch" aria-hidden="true"></span></label>
+  <label class="setting images-setting"><span><strong>图片下载</strong><small id="images-status">正在读取…</small></span><input id="images-enabled" type="checkbox" role="switch" disabled><span class="switch" aria-hidden="true"></span></label>
+  <p class="image-hint">详情页提供：下载主图＋A+ ／ 刷新后仅下载 A+</p>
+  <section><div class="summary"><span>我的 ASIN</span><b id="count">0</b></div><textarea id="asins" readonly spellcheck="false" aria-label="已收集 ASIN" placeholder="开启后，点击商品卡上的「收集」"></textarea><div class="actions"><button id="copy">一键复制</button><button id="dedupe">一键去重</button></div></section>
+  <p id="notice" role="status">全球共用列表，同一 ASIN 仅保留一次。</p>
+  <footer>首次安装后请刷新亚马逊网页。<br>已收集的 ASIN 统一在此弹窗查看。</footer>
+  <script src="popup.js"></script>
+</body></html>
