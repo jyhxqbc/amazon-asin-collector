@@ -11,23 +11,21 @@
   const PANEL_ID = 'ac-amazon-image-downloader-panel';
   const AUTO_APLUS_ONLY_KEY = 'ac-amazon-image-downloader-auto-aplus-only';
   const DOWNLOAD_CONCURRENCY = 3;
-  const REQUEST_TIMEOUT_MS = 7000;
+  const REQUEST_TIMEOUT_MS = 20000;
   const INCLUDE_BRAND_STORY = false;
   const INCLUDE_COMPARISON_TABLE = false;
 
-  const AMAZON_IMAGE_URL_RE = /https?:\/\/(?:m\.media-amazon\.com|(?:[^/"']+\.)?ssl-images-amazon\.com)\/images\/(?:I|S)\/[^\s"'<>)]*?\.(?:jpg|jpeg|png|webp)(?:\?[^\s"'<>)]*)?/gi;
+  const AMAZON_IMAGE_URL_RE = /https?:\/\/(?:m\.media-amazon\.com|(?:[^/"']+\.)?ssl-images-amazon\.com)\/images\/(?:I|G|S)\/[^\s"'<>)]*?\.(?:jpg|jpeg|png|webp)(?:\?[^\s"'<>)]*)?/gi;
 
   function isProductPage() {
-    return /\/dp\/[A-Z0-9]{10}/i.test(location.pathname) ||
+    return /\/gp\/aw\/d\/[A-Z0-9]{10}/i.test(location.pathname) || /\/dp\/[A-Z0-9]{10}/i.test(location.pathname) ||
       /\/gp\/product\/[A-Z0-9]{10}/i.test(location.pathname) ||
       document.querySelector('#dp, #ppd, #centerCol, #landingImage');
   }
 
   function getAsin() {
-    const urlAsin = location.pathname.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i);
-    if (urlAsin) return urlAsin[1].toUpperCase();
-    const domAsin = document.querySelector('#ASIN, input[name="ASIN"]')?.value;
-    return domAsin || 'amazon-detail';
+    return ASINCollector.normalize(document.querySelector('#ASIN, input[name="ASIN"]')?.value)
+      || ASINCollector.fromURL(location.href) || 'amazon-detail';
   }
 
   function decodeAmazonText(value) {
@@ -74,7 +72,7 @@
 
     return {
       bucket,
-      image_id: bucket === 'I' ? baseId : `${bucket}/${baseId}`,
+      image_id: bucket === 'I' ? baseId : `${bucket}/${dir}${baseId}`,
       source_url: sourceUrl,
       display_url: displayUrl,
       transform,
@@ -96,8 +94,7 @@
   }
 
   function isAPlusContentImage(item) {
-    if (item.bucket !== 'S') return false;
-    if (!item.display_url.includes('/aplus-media-library-service-media/')) return false;
+    if (!['I','S','G'].includes(item.bucket)) return false;
     if (/brandStory|brand-story|apm-brand-story/i.test(item.source) && !INCLUDE_BRAND_STORY) return false;
     if (/comparison|compare-table|comparison-table/i.test(item.source) && !INCLUDE_COMPARISON_TABLE) return false;
     return true;
@@ -158,10 +155,87 @@
     return Array.from(byId.values());
   }
 
+  // Read JSON data only; never execute Amazon's inline scripts.
+  function readLiteral(text,start) {
+    const quote=text[start]; let value='';
+    for(let i=start+1;i<text.length;i++) {
+      const c=text[i]; if(c===quote)return {value,end:i+1};
+      if(c!=='\\'){value+=c;continue;}
+      const n=text[++i];
+      if(n==='u' || n==='x') {const count=n==='u'?4:2;const hex=text.slice(i+1,i+1+count);if(!new RegExp(`^[0-9a-f]{${count}}$`,'i').test(hex))return null;value+=String.fromCharCode(parseInt(hex,16));i+=count;}
+      else value+=({n:'\n',r:'\r',t:'\t',b:'\b',f:'\f'}[n] ?? n);
+    }
+    return null;
+  }
+  function jsonAt(text,start) {
+    while(/\s/.test(text[start]||'') && start<text.length)start++;
+    if(text[start]==="'" || text[start]==='"'){const literal=readLiteral(text,start);if(!literal)return null;try{return JSON.parse(literal.value);}catch{return null;}}
+    const open=text[start],close=open==='['?']':'}';if(!['[','{'].includes(open))return null;
+    let depth=0;
+    for(let i=start;i<text.length;i++){
+      if(text[i]==='"' || text[i]==="'"){const literal=readLiteral(text,i);if(!literal)return null;i=literal.end-1;continue;}
+      if(text[i]===open)depth++;
+      if(text[i]===close && --depth===0){try{return JSON.parse(text.slice(start,i+1));}catch{return null;}}
+    }
+    return null;
+  }
+  function galleryRecords() {
+    const current=getAsin();
+    const landing=document.querySelector('#landingImage,#main-image,#imgBlkFront');
+    const landingId=parseAmazonImageUrl(landing?.getAttribute('data-old-hires')||landing?.getAttribute('src'))?.image_id;
+    const matchesLanding=arr=>!landingId || arr.some(r=>[r.hiRes,r.large,r.thumb,...Object.keys(r.main||{})].some(u=>parseAmazonImageUrl(u)?.image_id===landingId));
+    for(const script of document.querySelectorAll('script')){
+      const text=script.textContent||'';if(!/colorImages|imageGalleryData/.test(text))continue;
+      const sourceAsin=text.match(/["']asin["']\s*:\s*["']([A-Z0-9]{10})["']/i)?.[1];
+      if(sourceAsin && sourceAsin!==current)continue;
+      const initial=/["']initial["']\s*:\s*(?:A\.\$\.parseJSON\s*\(\s*)?/g;
+      let match;while((match=initial.exec(text))){const data=jsonAt(text,initial.lastIndex);if(Array.isArray(data)&&data.length&&matchesLanding(data))return data;}
+      const keys=/["'](?:colorImages|imageGalleryData)["']\s*:\s*/g;
+      while((match=keys.exec(text))){const data=jsonAt(text,keys.lastIndex);if(!data)continue;
+        if(Array.isArray(data)&&data.length&&matchesLanding(data))return data;
+        if(typeof data==='object' && landingId){for(const group of Object.values(data))if(Array.isArray(group)&&group.length&&matchesLanding(group))return group;}
+      }
+    }
+    return [];
+  }
+  function mergeGallery(domItems) {
+    const records=galleryRecords(), aliases=new Set(), gallery=[];
+    for(const record of records){
+      if(record.isVideo || /video/i.test(record.mediaType||''))continue;
+      const best=record.hiRes || Object.keys(record.main||{}).sort((a,b)=>(record.main[b]?.[0]||0)-(record.main[a]?.[0]||0))[0] || record.large || record.lowRes;
+      if(!best)continue;
+      addCandidate(gallery,'main',best,'main colorImages hires');
+      for(const u of [record.hiRes,record.large,record.thumb,record.lowRes,...Object.keys(record.main||{})]){const id=parseAmazonImageUrl(u)?.image_id;if(id)aliases.add(id);}
+    }
+    // Explicit gallery order wins. Thumbnail aliases are not additional images.
+    return uniqueByImageId([...gallery,...domItems.filter(item=>!aliases.has(item.image_id))]).filter(isLikelyProductMainImage);
+  }
+  async function prepareImageQueue(mode,runLifecycle) {
+    const asin=getAsin();let latest=buildImageQueue(mode),lastKey='',stable=0;
+    const x=window.scrollX,y=window.scrollY;let userMoved=false,scrolled=false;
+    const moved=()=>{userMoved=true;};window.addEventListener('wheel',moved,{passive:true});window.addEventListener('touchstart',moved,{passive:true});window.addEventListener('keydown',moved);
+    try {
+      for(let i=0;i<16;i++){
+        if(!featureEnabled || lifecycle!==runLifecycle)break;
+        if(getAsin()!==asin)throw new Error('扫描时商品变体发生变化，请在目标变体上重新下载');
+        if(mode.includeAPlus&&!scrolled){const root=document.querySelector('#aplus_feature_div,#aplus,#aplus3p_feature_div,#aplus-mweb_feature_div');if(root){root.scrollIntoView({block:'start',behavior:'instant'});scrolled=true;}}
+        await new Promise(resolve=>setTimeout(resolve,500));latest=buildImageQueue(mode);
+        const key=latest.allImages.map(x=>x.image_id).join('|');stable=key===lastKey?stable+1:0;lastKey=key;
+        setStatus(`正在识别：主图 ${latest.mainImages.length}，A+ ${latest.aplusImages.length}…`);
+        if(stable>=3 && (!mode.includeMain||latest.mainImages.length) && (!mode.includeAPlus||latest.aplusImages.length))break;
+      }
+    } finally {
+      window.removeEventListener('wheel',moved);window.removeEventListener('touchstart',moved);window.removeEventListener('keydown',moved);
+      if(scrolled&&!userMoved)window.scrollTo(x,y);
+    }
+    return latest;
+  }
+
   function collectMainImages() {
     const items = [];
 
-    document.querySelectorAll('#landingImage, #imgBlkFront, .imgTagWrapper img').forEach((element) => {
+    document.querySelectorAll('#landingImage, #imgBlkFront, .imgTagWrapper img, #main-image, #image-block img, #imageBlock_feature_div img, #imageBlock img, #main-image-container img, #imageBlockThumbs img, #altImages img, #imgTagWrapperId img').forEach((element) => {
+      if (element.closest('.videoThumbnail, [class*=swatch], #twister, [id*=variation], [data-video-url]')) return;
       addElementImages(items, 'main', element, 'main landing image');
     });
 
@@ -173,21 +247,22 @@
       addElementImages(items, 'main', element, 'main media carousel');
     });
 
-    return uniqueByImageId(items).filter(isLikelyProductMainImage);
+    return mergeGallery(items);
   }
 
   function collectAPlusImages() {
     const items = [];
     const roots = [
-      ...document.querySelectorAll('#aplus_feature_div .aplus-v2, #aplus_feature_div'),
+      ...document.querySelectorAll('#aplus_feature_div, #aplus, #aplus3p_feature_div, #aplus-mweb_feature_div, #productDescription .aplus-v2'),
       ...(INCLUDE_BRAND_STORY ? Array.from(document.querySelectorAll('#aplusBrandStory_feature_div .aplus-v2, #aplusBrandStory_feature_div')) : []),
     ];
     const uniqueRoots = roots.filter((root, index) => roots.indexOf(root) === index);
 
     uniqueRoots.forEach((root) => {
-      root.querySelectorAll('img, source, [style], [data-src], [data-a-hires], [data-old-hires], [data-srcset]').forEach((element) => {
+      root.querySelectorAll('img, source, [style], [data-src], [data-a-hires], [data-old-hires], [data-srcset], noscript').forEach((element) => {
         if (!INCLUDE_BRAND_STORY && element.closest('#aplusBrandStory_feature_div, .apm-brand-story-card, .apm-brand-story-hero')) return;
         if (!INCLUDE_COMPARISON_TABLE && element.closest('[class*="comparison"], [id*="comparison"], [class*="compare-table"], [id*="compare-table"]')) return;
+        if (element.tagName === 'NOSCRIPT') { addUrlsFromValue(items,'aplus',element.textContent,'A+ noscript'); return; }
         const module = element.closest('.aplus-module, [data-cel-widget], .celwidget');
         addElementImages(items, 'aplus', element, `A+ node ${module?.className || module?.id || ''}`);
       });
@@ -200,7 +275,7 @@
     const mainDisplay1600 = image.type === 'main' ? toMainImage1600Url(image.display_url) : '';
     const mainSource1600 = image.type === 'main' ? toMainImage1600Url(image.source_url) : '';
     const preferred = image.type === 'main'
-      ? [mainDisplay1600, mainSource1600, image.source_url, image.display_url]
+      ? [image.display_url, mainDisplay1600, mainSource1600, image.source_url]
       : [image.display_url, image.source_url];
     return Array.from(new Set(preferred.filter(Boolean)));
   }
@@ -233,12 +308,17 @@
   }
 
   async function fetchWithFallback(urls) {
-    const errors = [];
-    for (const url of urls) {
-      try {
-        return await fetchArrayBuffer(url);
-      } catch (error) {
-        errors.push(`${url}: ${error.message || error}`);
+    const errors=[];
+    for(const url of urls){
+      for(let attempt=0;attempt<2;attempt++){
+        if(!featureEnabled)throw new Error('图片下载已关闭');
+        try{return await fetchArrayBuffer(url);}catch(error){
+          errors.push(`${url}: ${error.message || error}`);
+          if(attempt===0 && /timeout|network|fetch|HTTP 5\d\d/i.test(error.message||'')){
+            await new Promise(resolve=>setTimeout(resolve,350));continue;
+          }
+          break;
+        }
       }
     }
     throw new Error(errors.join(' | '));
@@ -594,14 +674,21 @@
       filenameSuffix: options.filenameSuffix || 'detail_images',
     };
 
-    const { mainImages, aplusImages, allImages } = buildImageQueue(mode);
-
+    busy=true;
+    setButtonsDisabled(true);
+    setStatus('正在等待图片并扫描主图／A+，请稍候…');
+    let prepared;
+    try { prepared = await prepareImageQueue(mode,runLifecycle); }
+    catch(error) { if(options.mobileTask) chrome.runtime.sendMessage({type:'END_MOBILE_MODE'}).catch(()=>{}); busy=false; setButtonsDisabled(false); setStatus(`扫描失败：${error.message}`); return; }
+    if (!featureEnabled || lifecycle!==runLifecycle) { busy=false; setButtonsDisabled(false); return; }
+    const {mainImages,aplusImages,allImages}=prepared;
     if (!allImages.length) {
-      setStatus('No downloadable Amazon detail images found.');
+      busy=false; setButtonsDisabled(false);
+      setStatus(`未识别到图片。主图 ${mainImages.length}，A+ ${aplusImages.length}。页面可能尚未加载、没有 A+ 或当前布局尚不支持；可尝试下方手机端按钮。`);
+      if (options.mobileTask) chrome.runtime.sendMessage({type:'END_MOBILE_MODE'}).catch(()=>{});
       return;
     }
 
-    busy=true;
     setButtonsDisabled(true);
     const mainButton = document.getElementById(BUTTON_ID);
     if (mainButton) mainButton.textContent = '正在打包…';
@@ -656,6 +743,7 @@
       });
 
       if (!featureEnabled || lifecycle !== runLifecycle) return;
+      zipFiles.push({name:'diagnostics.json',buffer:new TextEncoder().encode(JSON.stringify({asin:downloadAsin,page:location.href,mainCount:mainImages.length,aplusCount:aplusImages.length,missingMain:mode.includeMain&&!mainImages.length,missingAPlus:mode.includeAPlus&&!aplusImages.length},null,2)).buffer});
       zipFiles.push({
         name: 'queue.json',
         buffer: new TextEncoder().encode(JSON.stringify(queue, null, 2)).buffer,
@@ -686,21 +774,33 @@
       triggerDownload(zipBlob, `${downloadAsin}_amazon_${mode.filenameSuffix}.zip`);
 
       const failCount = manifest.filter((item) => item.status !== 'ok').length;
-      setStatus(`Done. Main ${mainImages.length}, A+ ${aplusImages.length}; ok ${okCount}, failed ${failCount}.`);
+      setStatus(`完成：主图 ${mainImages.length}，A+ ${aplusImages.length}；成功 ${okCount}，失败 ${failCount}。${mode.includeMain&&!mainImages.length?'【未识别到主图】':''}${mode.includeAPlus&&!aplusImages.length?'【未识别到 A+】':''}`);
     } catch (error) {
       setStatus(`Failed: ${error.message || error}`);
     } finally {
+      if(options.mobileTask) chrome.runtime.sendMessage({type:'END_MOBILE_MODE'}).catch(()=>{});
       busy=false;
       setButtonsDisabled(false);
       if (mainButton) mainButton.textContent = '下载主图＋A+';
     }
   }
 
-  function reloadThenDownloadAPlusOnly() {
+  async function reloadThenDownloadAPlusOnly() {
     if (!featureEnabled || busy) return;
-    try { sessionStorage.setItem(AUTO_APLUS_ONLY_KEY, '1'); } catch { setStatus('无法保存刷新标记，请使用主图＋A+ 下载。'); return; }
-    setStatus('Reloading page, then downloading A+ only...');
-    location.reload();
+    const asin=getAsin();
+    if (!ASINCollector.normalize(asin)) { setStatus('无法识别当前商品 ASIN。'); return; }
+    try {
+      setButtonsDisabled(true);
+      sessionStorage.setItem(AUTO_APLUS_ONLY_KEY, '1');
+      const result=await chrome.runtime.sendMessage({type:'START_MOBILE_MODE',asin});
+      if (!result?.ok) throw new Error(result?.error || '手机端切换失败');
+      setStatus('已启用本标签页手机端请求，正在跳转并准备 A+…');
+      location.assign(result.url);
+    } catch(error) {
+      sessionStorage.removeItem(AUTO_APLUS_ONLY_KEY);
+      chrome.runtime.sendMessage({type:'END_MOBILE_MODE'}).catch(()=>{});
+      setButtonsDisabled(false); setStatus(`切换失败：${error.message}`);
+    }
   }
 
   function injectButton() {
@@ -755,7 +855,7 @@
     const aplusButton = document.createElement('button');
     aplusButton.id = APLUS_BUTTON_ID;
     aplusButton.type = 'button';
-    aplusButton.textContent = '刷新后仅下载 A+';
+    aplusButton.textContent = '切换手机端刷新下载A+';
     aplusButton.style.cssText = [
       'border:1px solid #5f6368',
       'background:#fff',
@@ -791,6 +891,7 @@
       clearTimeout(scanTimer); scanTimer=null;
       clearTimeout(autoTimer); autoTimer=null;
       document.getElementById(WRAPPER_ID)?.remove();
+      chrome.runtime.sendMessage({type:'END_MOBILE_MODE'}).catch(()=>{});
       try { sessionStorage.removeItem(AUTO_APLUS_ONLY_KEY); } catch {}
       return;
     }
@@ -803,7 +904,7 @@
     try {
       if (sessionStorage.getItem(AUTO_APLUS_ONLY_KEY)==='1') {
         sessionStorage.removeItem(AUTO_APLUS_ONLY_KEY);
-        autoTimer=setTimeout(() => downloadImages({includeMain:false,includeAPlus:true,filenameSuffix:'aplus_only'}),2500);
+        autoTimer=setTimeout(() => downloadImages({includeMain:false,includeAPlus:true,filenameSuffix:'aplus_only',mobileTask:true}),2500);
       }
     } catch {}
   }

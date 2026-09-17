@@ -1,4 +1,4 @@
-importScripts('common.js', 'image-fetch.js');
+importScripts('common.js', 'image-fetch.js', 'mobile-mode.js');
 'use strict';
 const KEY = 'asinCollectorState';
 let queue = Promise.resolve();
@@ -15,6 +15,7 @@ async function handle(message) {
   if (message.type === 'GET_STATE') return { ok: true, state };
   if (message.type === 'SET_ENABLED') state.enabled = message.enabled === true;
   else if (message.type === 'SET_IMAGES_ENABLED') state.imagesEnabled = message.enabled === true;
+  else if (message.type === 'CLEAR_ASINS') state.asins = [];
   else if (message.type === 'SET_COLLECTED') {
     const asin = ASINCollector.normalize(message.asin);
     if (!asin) throw new Error('ASIN 格式无效');
@@ -28,7 +29,7 @@ async function handle(message) {
   return { ok: true, state };
 }
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
-  if (sender.id !== chrome.runtime.id || !['GET_STATE','SET_ENABLED','SET_IMAGES_ENABLED','SET_COLLECTED','DEDUPE'].includes(message?.type)) return false;
+  if (sender.id !== chrome.runtime.id || !['GET_STATE','SET_ENABLED','SET_IMAGES_ENABLED','CLEAR_ASINS','SET_COLLECTED','DEDUPE'].includes(message?.type)) return false;
   const job = queue.then(() => handle(message));
   queue = job.catch(() => {});
   job.then(respond, error => respond({ ok: false, error: error.message || '保存失败，请重试' }));

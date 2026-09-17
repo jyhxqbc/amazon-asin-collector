@@ -17,7 +17,7 @@
     const raw = (await chrome.storage.local.get('asinCollectorState')).asinCollectorState;
     if (!raw?.imagesEnabled) throw new Error('图片下载功能已关闭');
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 7000);
+    const timer = setTimeout(() => controller.abort(), 20000);
     try {
       const response = await fetch(url, { signal: controller.signal, credentials:'omit', redirect:'error' });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);

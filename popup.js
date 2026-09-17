@@ -33,6 +33,11 @@ $('images-enabled').addEventListener('change', async () => {
 $('dedupe').addEventListener('click', async () => {
   try { await request({type:'DEDUPE'}); $('notice').textContent = '已去重，同一 ASIN 仅保留一次。'; } catch(e) { error(e); }
 });
+$('clear').addEventListener('click', async () => {
+  $('clear').disabled=true;
+  try { await request({type:'CLEAR_ASINS'}); $('notice').textContent='已清除全部 ASIN，功能开关保持不变。'; }
+  catch(e) { error(e); } finally { $('clear').disabled=false; }
+});
 $('copy').addEventListener('click', async () => {
   if (!$('asins').value) { $('notice').textContent = '还没有收集 ASIN。'; return; }
   try { await navigator.clipboard.writeText($('asins').value); $('notice').textContent = '已复制全部 ASIN。'; }
