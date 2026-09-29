@@ -17,6 +17,8 @@
     *{box-sizing:border-box}button{font-family:inherit;cursor:pointer;border:1px solid #cddfd9;border-radius:6px;background:#fff;color:#275448;font-size:12px;line-height:18px;padding:4px 9px;white-space:nowrap;box-shadow:0 1px 2px #1232}
     button:hover{background:#eaf6f1;border-color:#0b8069}button:focus-visible{outline:2px solid #0b8069;outline-offset:2px}button:disabled{opacity:.55;cursor:wait}
     .bar{display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:4px 0 6px;text-align:left;line-height:normal}
+    .saved-asin{display:block;width:max-content;max-width:100%;padding:2px 0 0;color:#475569;font-size:11px;line-height:16px;letter-spacing:.2px;user-select:text;-webkit-user-select:text;cursor:text}
+    .saved-asin[hidden]{display:none}
     .collect{background:#0b8069;color:#fff;border-color:#0b8069}.collect:hover{background:#096c58}.collect.saved{background:#eaf6f1;color:#08604e;border-color:#a8cebd}
     .error{color:#b42318;font-size:11px;line-height:1.4}
   `;
@@ -53,6 +55,7 @@
   function refreshUI() {
     for (const info of mounted.values()) {
       const saved = collected.has(info.asin);
+      info.asinLabel.hidden = !saved;
       info.collect.textContent = saved ? '取消收集' : '收集';
       info.collect.classList.toggle('saved', saved);
       info.collect.setAttribute('aria-pressed',String(saved));
@@ -146,6 +149,9 @@
     const info={...data,host};
     host.dataset.asin = data.asin;
     if (data.main) host.dataset.main='true';
+    info.asinLabel=document.createElement('span'); info.asinLabel.className='saved-asin';
+    info.asinLabel.textContent=data.asin; info.asinLabel.hidden=true;
+    info.asinLabel.title='选中后可复制 ASIN';
     info.collect=button('收集','collect',async () => {
       if (pending.has(info.asin)) return;
       pending.add(info.asin); refreshUI();
@@ -156,7 +162,7 @@
     info.error=document.createElement('span'); info.error.className='error'; info.error.setAttribute('role','status');
     info.list=button('已收集 (0)','',() => {});
     info.list.title='已收集的 ASIN 总数；点击浏览器工具栏的插件图标查看完整列表';
-    bar.append(info.collect,info.list,info.error); root.append(bar);
+    bar.append(info.collect,info.list,info.error); root.append(info.asinLabel,bar);
     owner.prepend(host); mounted.set(owner,info);
   }
   function scan() {

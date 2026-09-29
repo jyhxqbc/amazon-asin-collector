@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "亚马逊 ASIN 收集器",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "跨商城收集 ASIN，并按油猴原逻辑下载商品主图与 A+ 图片 ZIP。两个功能独立开关。",
   "minimum_chrome_version": "109",
   "permissions": [
